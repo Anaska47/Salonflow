@@ -1,0 +1,7 @@
+{
+  "name": "SalonFlow",
+  "description": "Système de caisse, gestion de stock et présence en temps réel pour salons de coiffure et barbiers. Multi-salons, RBAC strict et tableaux de bord analytiques.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
