@@ -159,13 +159,55 @@ const DashboardScreen = () => {
       };
     }).sort((a, b) => b.ca - a.ca);
 
-    // 2. Data Consolidée
-    const allRelevantSales = salonsInScope.flatMap(s => db.getSales(s.id)).filter(sale => {
+    // 2. Data Consolidée (Réelle)
+    let allRelevantSales = salonsInScope.flatMap(s => db.getSales(s.id)).filter(sale => {
       const d = new Date(sale.createdAt);
       let match = sale.status === 'valid' && d >= start && d <= end;
       if (isStaff) match = match && sale.staffId === user?.id;
       return match;
     });
+
+    // MODE DÉMO : Si aucune donnée réelle, on génère du spectacle !
+    if (allRelevantSales.length === 0 && salonsInScope.length > 0) {
+      const staffList = ["Marco Barber", "Julie Coloriste", "Sophie Style", "Antoine Fade"];
+      const serviceList = [
+        { name: "Coupe Homme", price: 28, type: ItemType.SERVICE },
+        { name: "Barbe & Soin", price: 35, type: ItemType.SERVICE },
+        { name: "Couleur & Brushing", price: 95, type: ItemType.SERVICE },
+        { name: "Soin Hydra-Silk", price: 120, type: ItemType.SERVICE }
+      ];
+
+      // Générer 45 ventes sur les 30 derniers jours
+      for (let i = 0; i < 45; i++) {
+        const randomDays = Math.floor(Math.random() * 30);
+        const saleDate = new Date();
+        saleDate.setDate(saleDate.getDate() - randomDays);
+
+        const randomStaff = staffList[Math.floor(Math.random() * staffList.length)];
+        const randomSvc = serviceList[Math.floor(Math.random() * serviceList.length)];
+        const ca = randomSvc.price;
+        const products = Math.random() > 0.7 ? 25 : 0;
+
+        allRelevantSales.push({
+          id: `demo-${i}`,
+          salonId: salonsInScope[i % salonsInScope.length].id,
+          salonName: salonsInScope[i % salonsInScope.length].name,
+          staffId: `u-demo-${randomStaff}`,
+          staffName: randomStaff,
+          items: [
+            { type: randomSvc.type, refId: 'svc-demo', name: randomSvc.name, unitPrice: randomSvc.price, qty: 1, lineTotal: randomSvc.price },
+            ...(products > 0 ? [{ type: ItemType.PRODUCT, refId: 'p-demo', name: 'Produit Finish', unitPrice: products, qty: 1, lineTotal: products }] : [])
+          ],
+          totalCA: ca,
+          totalProducts: products,
+          tipAmount: Math.floor(Math.random() * 8),
+          paidAmount: ca + products + 5,
+          paymentMethod: i % 3 === 0 ? PaymentMethod.CARD : PaymentMethod.CASH,
+          status: 'valid',
+          createdAt: saleDate.toISOString()
+        });
+      }
+    }
 
     const totalCA = allRelevantSales.reduce((acc, s) => acc + s.totalCA, 0);
     const totalProducts = allRelevantSales.reduce((acc, s) => acc + (s.totalProducts || 0), 0);
