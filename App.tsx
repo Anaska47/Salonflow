@@ -24,26 +24,32 @@ import BookingScreen from './screens/Booking';
 
 
 
-const ConfigError = () => (
-  <div className="min-h-screen bg-slate-900 flex items-center justify-center p-8 text-white">
-    <div className="max-w-md w-full space-y-8 text-center bg-slate-800 p-10 rounded-[3rem] border border-white/5 shadow-2xl">
-      <div className="w-20 h-20 bg-rose-500 rounded-3xl flex items-center justify-center mx-auto shadow-2xl rotate-3">
-        <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" strokeWidth={2} />
-        </svg>
+const ConfigError = () => {
+  const url = import.meta.env.VITE_SUPABASE_URL;
+  const key = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+  return (
+    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-8 text-white">
+      <div className="max-w-md w-full space-y-8 text-center bg-slate-800 p-10 rounded-[3rem] border border-white/5 shadow-2xl">
+        <div className="w-20 h-20 bg-rose-500 rounded-3xl flex items-center justify-center mx-auto shadow-2xl rotate-3">
+          <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" strokeWidth={2} />
+          </svg>
+        </div>
+        <div className="space-y-4">
+          <h1 className="text-3xl font-black italic tracking-tighter uppercase italic leading-none">Configuration Interrompue</h1>
+          <p className="text-slate-400 text-sm font-medium leading-relaxed">Les variables d'environnement <span className="text-white font-bold">Supabase</span> sont manquantes ou non détectées lors du build.</p>
+        </div>
+        <div className="p-4 bg-slate-900 rounded-2xl text-[10px] font-mono text-rose-400 text-left overflow-auto space-y-1">
+          <div>URL: {url ? 'DÉTECTÉE ✅' : 'MANQUANTE ❌'}</div>
+          <div>KEY: {key ? 'DÉTECTÉE ✅' : 'MANQUANTE ❌'}</div>
+          <div>CLIENT: {supabase ? 'INITIALISÉ ✅' : 'ÉCHEC ❌'}</div>
+        </div>
+        <p className="text-[10px] text-white/20 font-black uppercase tracking-widest leading-loose">Si les variables sont présentes sur Vercel, un "Redeploy" est nécessaire pour les injecter dans le code.</p>
       </div>
-      <div className="space-y-4">
-        <h1 className="text-3xl font-black italic tracking-tighter uppercase italic leading-none">Configuration Interrompue</h1>
-        <p className="text-slate-400 text-sm font-medium leading-relaxed">Les variables d'environnement <span className="text-white font-bold">Supabase</span> sont manquantes. L'application ne peut pas fonctionner en dehors d'un environnement configuré.</p>
-      </div>
-      <div className="p-4 bg-slate-900 rounded-2xl text-[10px] font-mono text-rose-400 text-left overflow-auto">
-        VITE_SUPABASE_URL: MISSING<br />
-        VITE_SUPABASE_ANON_KEY: MISSING
-      </div>
-      <p className="text-[10px] text-white/20 font-black uppercase tracking-widest leading-loose">Ajoutez ces variables dans votre dashboard Vercel ou votre fichier .env.local pour continuer.</p>
     </div>
-  </div>
-);
+  );
+};
 
 const SyncIndicator = () => {
   const { isSyncing } = useAuth();
@@ -344,10 +350,8 @@ const App: React.FC = () => {
 
   // Sync session with Supabase
   useEffect(() => {
-    // Vérification critique avant démarrage (usage d'un cast pour éviter les erreurs de type ImportMeta)
-    const meta = (typeof import.meta !== 'undefined') ? import.meta : { env: {} };
-    const metaEnv = (meta as any).env || {};
-    const hasConfig = !!metaEnv.VITE_SUPABASE_URL && !!metaEnv.VITE_SUPABASE_ANON_KEY;
+    // @ts-ignore
+    const hasConfig = !!import.meta.env.VITE_SUPABASE_URL && !!import.meta.env.VITE_SUPABASE_ANON_KEY;
 
     if (!hasConfig || !supabase) {
       setConfigMissing(true);
