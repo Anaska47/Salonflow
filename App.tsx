@@ -345,8 +345,9 @@ const App: React.FC = () => {
   // Sync session with Supabase
   useEffect(() => {
     // Vérification critique avant démarrage (usage d'un cast pour éviter les erreurs de type ImportMeta)
-    const meta = import.meta as any;
-    const hasConfig = !!meta.env.VITE_SUPABASE_URL && !!meta.env.VITE_SUPABASE_ANON_KEY;
+    const meta = (typeof import.meta !== 'undefined') ? import.meta : { env: {} };
+    const metaEnv = (meta as any).env || {};
+    const hasConfig = !!metaEnv.VITE_SUPABASE_URL && !!metaEnv.VITE_SUPABASE_ANON_KEY;
 
     if (!hasConfig || !supabase) {
       setConfigMissing(true);
