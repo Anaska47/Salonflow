@@ -348,7 +348,7 @@ const App: React.FC = () => {
     const meta = import.meta as any;
     const hasConfig = !!meta.env.VITE_SUPABASE_URL && !!meta.env.VITE_SUPABASE_ANON_KEY;
 
-    if (!hasConfig) {
+    if (!hasConfig || !supabase) {
       setConfigMissing(true);
       setLoading(false);
       return;
