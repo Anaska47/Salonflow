@@ -43,16 +43,22 @@ const ServicesScreen = () => {
 
   const handleSave = async () => {
     if (!editingService?.name || editingService?.price === undefined) return;
-    await sbUpsertService({
-      id: editingService.id,
-      salonId: salon!.id,
-      name: editingService.name,
-      price: Math.max(0, Number(editingService.price)),
-      duration: Math.max(0, Number(editingService.duration || 30)),
-      isActive: editingService.isActive ?? true,
-    });
-    await loadServices();
-    setEditingService(null);
+    try {
+      const result = await sbUpsertService({
+        id: editingService.id,
+        salonId: salon!.id,
+        name: editingService.name,
+        price: Math.max(0, Number(editingService.price)),
+        duration: Math.max(0, Number(editingService.duration || 30)),
+        isActive: editingService.isActive ?? true,
+      });
+      if (!result) throw new Error('sbUpsertService a retourné null — vérifiez la console pour les détails Supabase.');
+      await loadServices();
+      setEditingService(null);
+    } catch (e: any) {
+      console.error('handleSave error:', e);
+      alert(`Erreur lors de la sauvegarde :\n${e.message}`);
+    }
   };
 
   const handleClone = async () => {

@@ -32,30 +32,46 @@ const StockScreen = () => {
 
   const handleUpdateStockDelta = async (p: Product, d: number) => {
     if (p.stockQty + d < 0) return;
-    await sbUpdateStock(p.id, d);
-    await loadProducts();
+    try {
+      await sbUpdateStock(p.id, d);
+      await loadProducts();
+    } catch (e: any) {
+      console.error('handleUpdateStockDelta error:', e);
+      alert(`Erreur lors de la mise à jour du stock :\n${e.message}`);
+    }
   };
 
   const handleSaveProduct = async () => {
     if (!editingProduct?.name || editingProduct?.price === undefined || editingProduct?.stockQty === undefined) return;
 
-    const safeProduct = {
-      ...editingProduct,
-      salonId: salon!.id,
-      price: Math.max(0, editingProduct.price),
-      stockQty: Math.max(0, editingProduct.stockQty),
-      alertThreshold: Math.max(0, editingProduct.alertThreshold || 0),
-    };
+    try {
+      const safeProduct = {
+        ...editingProduct,
+        salonId: salon!.id,
+        price: Math.max(0, editingProduct.price),
+        stockQty: Math.max(0, editingProduct.stockQty),
+        alertThreshold: Math.max(0, editingProduct.alertThreshold || 0),
+      };
 
-    await sbUpsertProduct(safeProduct as Product & { salonId: string });
-    await loadProducts();
-    setEditingProduct(null);
+      const result = await sbUpsertProduct(safeProduct as Product & { salonId: string });
+      if (!result) throw new Error("sbUpsertProduct a retourné null");
+      await loadProducts();
+      setEditingProduct(null);
+    } catch (e: any) {
+      console.error('handleSaveProduct error:', e);
+      alert(`Erreur lors de l'enregistrement du produit :\n${e.message}`);
+    }
   };
 
   const handleDeleteProduct = async (id: string) => {
     if (window.confirm("Retirer définitivement ce produit de l'inventaire ?")) {
-      await sbDeleteProduct(id);
-      await loadProducts();
+      try {
+        await sbDeleteProduct(id);
+        await loadProducts();
+      } catch (e: any) {
+        console.error('handleDeleteProduct error:', e);
+        alert(`Erreur lors de la suppression du produit :\n${e.message}`);
+      }
     }
   };
 

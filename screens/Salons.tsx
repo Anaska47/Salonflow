@@ -114,7 +114,8 @@ const SalonsScreen = () => {
       await refreshData();
       setEditingSalon(null);
     } catch (e: any) {
-      alert(e.message);
+      console.error('Salons handleSave error:', e);
+      alert(`Erreur lors de l'enregistrement du salon :\n${e.message}`);
     } finally {
       setLoading(false);
     }
@@ -139,7 +140,8 @@ const SalonsScreen = () => {
         if (error) throw error;
         await refreshData();
       } catch (err: any) {
-        alert(err.message);
+        console.error('Salons handleDelete error:', err);
+        alert(`Erreur lors de la suppression du salon :\n${err.message}`);
       } finally {
         setLoading(false);
       }
@@ -170,7 +172,8 @@ const SalonsScreen = () => {
       if (error) throw error;
       await loadStaffData(); // Refresh staff data after assignment change
     } catch (err: any) {
-      alert(err.message);
+      console.error('toggleUserSalonAssignment error:', err);
+      alert(`Erreur lors de l'affectation du salon :\n${err.message}`);
     } finally {
       setLoading(false);
     }

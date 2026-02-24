@@ -24,6 +24,27 @@ import BookingScreen from './screens/Booking';
 
 
 
+const ConfigError = () => (
+  <div className="min-h-screen bg-slate-900 flex items-center justify-center p-8 text-white">
+    <div className="max-w-md w-full space-y-8 text-center bg-slate-800 p-10 rounded-[3rem] border border-white/5 shadow-2xl">
+      <div className="w-20 h-20 bg-rose-500 rounded-3xl flex items-center justify-center mx-auto shadow-2xl rotate-3">
+        <svg className="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" strokeWidth={2} />
+        </svg>
+      </div>
+      <div className="space-y-4">
+        <h1 className="text-3xl font-black italic tracking-tighter uppercase italic leading-none">Configuration Interrompue</h1>
+        <p className="text-slate-400 text-sm font-medium leading-relaxed">Les variables d'environnement <span className="text-white font-bold">Supabase</span> sont manquantes. L'application ne peut pas fonctionner en dehors d'un environnement configuré.</p>
+      </div>
+      <div className="p-4 bg-slate-900 rounded-2xl text-[10px] font-mono text-rose-400 text-left overflow-auto">
+        VITE_SUPABASE_URL: MISSING<br />
+        VITE_SUPABASE_ANON_KEY: MISSING
+      </div>
+      <p className="text-[10px] text-white/20 font-black uppercase tracking-widest leading-loose">Ajoutez ces variables dans votre dashboard Vercel ou votre fichier .env.local pour continuer.</p>
+    </div>
+  </div>
+);
+
 const SyncIndicator = () => {
   const { isSyncing } = useAuth();
   if (!isSyncing) return null;
@@ -319,9 +340,20 @@ const App: React.FC = () => {
   const [salons, setSalons] = useState<Salon[]>([]);
   const [isSyncing, setIsSyncing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [configMissing, setConfigMissing] = useState(false);
 
   // Sync session with Supabase
   useEffect(() => {
+    // Vérification critique avant démarrage (usage d'un cast pour éviter les erreurs de type ImportMeta)
+    const meta = import.meta as any;
+    const hasConfig = !!meta.env.VITE_SUPABASE_URL && !!meta.env.VITE_SUPABASE_ANON_KEY;
+
+    if (!hasConfig) {
+      setConfigMissing(true);
+      setLoading(false);
+      return;
+    }
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       if (session) loadProfile(session.user.id);
@@ -427,7 +459,8 @@ const App: React.FC = () => {
   return (
     <AuthContext.Provider value={authValue}>
       <HashRouter>
-        <SyncIndicator />
+        {configMissing && <ConfigError />}
+        {!configMissing && <SyncIndicator />}
         <Routes>
           <Route path="/book/:salonId?" element={<BookingScreen />} />
           <Route path="*" element={

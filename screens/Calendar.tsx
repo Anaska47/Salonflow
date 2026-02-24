@@ -80,9 +80,15 @@ const CalendarScreen = () => {
   const handleToggleStaff = async (staffId: string) => {
     if (!isOwner || !salon) return;
     setIsSyncing(true);
-    await sbToggleStaffSchedule(salon.id, staffId, selectedDate);
-    await loadData();
-    setIsSyncing(false);
+    try {
+      await sbToggleStaffSchedule(salon.id, staffId, selectedDate);
+      await loadData();
+    } catch (e: any) {
+      console.error('handleToggleStaff error:', e);
+      alert(`Erreur lors du changement de planning :\n${e.message}`);
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
   const monthData = useMemo(() => {
