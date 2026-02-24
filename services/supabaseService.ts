@@ -87,7 +87,7 @@ export const sbGetSalons = async (ownerId: string): Promise<Salon[]> => {
         .from('salons')
         .select('*')
         .eq('owner_id', ownerId)
-        .order('created_at', { ascending: true });
+        .order('id', { ascending: true });
     if (error) { console.error('sbGetSalons:', error); return []; }
     return (data || []).map(mapSalon);
 };
@@ -152,7 +152,7 @@ export const sbGetServices = async (salonId: string): Promise<Service[]> => {
         .from('services')
         .select('*')
         .eq('salon_id', salonId)
-        .order('created_at', { ascending: true });
+        .order('id', { ascending: true });
     if (error) {
         const msg = `sbGetServices Error: ${error.message}`;
         console.error(msg, error);
@@ -216,7 +216,7 @@ export const sbGetProducts = async (salonId: string): Promise<Product[]> => {
         .from('products')
         .select('*')
         .eq('salon_id', salonId)
-        .order('created_at', { ascending: true });
+        .order('id', { ascending: true });
     if (error) { console.error('sbGetProducts:', error); return []; }
     return (data || []).map(mapProduct);
 };
