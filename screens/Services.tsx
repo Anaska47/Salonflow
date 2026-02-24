@@ -1,8 +1,14 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { db } from '../services/mockDb';
 import { useAuth } from '../App';
 import { Service, UserRole } from '../types';
+import {
+  sbGetServices,
+  sbUpsertService,
+  sbGetSalons,
+  sbCloneServices,
+} from '../services/supabaseService';
+import { Salon } from '../types';
 
 const ServicesScreen = () => {
   const { salon, user } = useAuth();
@@ -11,34 +17,48 @@ const ServicesScreen = () => {
   const [showCloneModal, setShowCloneModal] = useState(false);
   const [selectedSalons, setSelectedSalons] = useState<string[]>([]);
   const [isCloning, setIsCloning] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [otherSalons, setOtherSalons] = useState<Salon[]>([]);
 
   const isOwner = user?.role === UserRole.OWNER || user?.role === UserRole.MANAGER;
-  const otherSalons = useMemo(() => {
-    return db.getSalons().filter(s => s.id !== salon?.id && user?.salons.includes(s.id));
-  }, [salon, user]);
+
+  const loadServices = async () => {
+    if (!salon) return;
+    setLoading(true);
+    const data = await sbGetServices(salon.id);
+    setServices(data);
+    setLoading(false);
+  };
+
+  const loadOtherSalons = async () => {
+    if (!user?.id) return;
+    const all = await sbGetSalons(user.role === UserRole.OWNER ? user.id : user.ownerId || user.id);
+    setOtherSalons(all.filter(s => s.id !== salon?.id && user?.salons.includes(s.id)));
+  };
 
   useEffect(() => {
-    if (salon) setServices(db.getServices(salon.id));
-  }, [salon]);
+    loadServices();
+    loadOtherSalons();
+  }, [salon, user]);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!editingService?.name || editingService?.price === undefined) return;
-    db.updateService({
-      id: editingService.id || '',
+    await sbUpsertService({
+      id: editingService.id,
       salonId: salon!.id,
       name: editingService.name,
       price: Math.max(0, Number(editingService.price)),
       duration: Math.max(0, Number(editingService.duration || 30)),
-      isActive: editingService.isActive ?? true
-    } as Service);
-    setServices(db.getServices(salon!.id));
+      isActive: editingService.isActive ?? true,
+    });
+    await loadServices();
     setEditingService(null);
   };
 
   const handleClone = async () => {
     if (selectedSalons.length === 0) return;
     setIsCloning(true);
-    await db.cloneServices(salon!.id, selectedSalons);
+    await sbCloneServices(salon!.id, selectedSalons);
     setIsCloning(false);
     setShowCloneModal(false);
     setSelectedSalons([]);
@@ -79,8 +99,14 @@ const ServicesScreen = () => {
         </div>
       </header>
 
+      {loading && (
+        <div className="flex items-center justify-center py-20">
+          <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-900 rounded-full animate-spin"></div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {services.length === 0 ? (
+        {services.length === 0 && !loading ? (
           <div className="col-span-full py-20 bg-white rounded-[3rem] border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-slate-300 space-y-4">
             <svg className="w-16 h-16 opacity-20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" strokeWidth={1.5} /></svg>
             <span className="text-[10px] font-black uppercase tracking-widest italic">Catalogue vide pour cet établissement</span>
@@ -108,10 +134,6 @@ const ServicesScreen = () => {
               >
                 Éditer Prestation
               </button>
-
-              <div className="absolute top-4 right-4 text-slate-100 group-hover:text-indigo-500/10 transition-colors pointer-events-none">
-                <svg className="w-16 h-16" fill="currentColor" viewBox="0 0 24 24"><path d="M9.663 17h4.673l2.033 3h2.131l-3.333-5h-3.334l-2.033-3H7.63l3.333 5H9.663zM15 11l-3-4.5L9 11h6z" /></svg>
-              </div>
             </div>
           ))
         )}

@@ -1,8 +1,13 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { db } from '../services/mockDb';
 import { useAuth } from '../App';
 import { Sale, UserRole, User } from '../types';
+import {
+  sbGetSales,
+  sbGetAllSales,
+  sbCancelSale,
+} from '../services/supabaseService';
+import { supabase } from '../services/supabaseClient';
 
 const HistoryScreen = () => {
   const { salon, user } = useAuth();
@@ -11,23 +16,32 @@ const HistoryScreen = () => {
   const [cancelReason, setCancelReason] = useState("");
   const [staffFilter, setStaffFilter] = useState<string>("all");
   const [exportMode, setExportMode] = useState<'both' | 'ca_only'>('both');
+  const [loading, setLoading] = useState(false);
+  const [salonStaff, setSalonStaff] = useState<{ id: string; name: string }[]>([]);
 
   const isStaff = user?.role === UserRole.STAFF;
   const isManagement = user?.role === UserRole.OWNER || user?.role === UserRole.MANAGER;
 
-  const salonStaff = useMemo(() => {
-    if (!salon) return [];
-    return db.getUsers().filter(u => u.salons.includes(salon.id));
-  }, [salon]);
+  const loadData = async () => {
+    if (!salon) return;
+    setLoading(true);
+
+    // Load sales
+    let data = await sbGetSales(salon.id, isStaff ? { staffId: user?.id } : undefined);
+    setSales(data);
+
+    // Load staff list from supabase for filter dropdown
+    const { data: staffData } = await supabase
+      .from('staff')
+      .select('id, name, salons')
+      .filter('salons', 'cs', `{${salon.id}}`);
+    setSalonStaff(staffData || []);
+
+    setLoading(false);
+  };
 
   useEffect(() => {
-    if (salon) {
-      let salonSales = db.getSales(salon.id);
-      if (isStaff) {
-        salonSales = salonSales.filter(s => s.staffId === user?.id);
-      }
-      setSales(salonSales);
-    }
+    loadData();
   }, [salon, isStaff, user]);
 
   const filteredSales = useMemo(() => {
@@ -40,12 +54,11 @@ const HistoryScreen = () => {
     const headers = ["ID Transaction", "Date", "Heure", "Salon", "Collaborateur", "C.A. Presta", "Vente Prod.", ...(exportMode === 'both' ? ["PB (Tips)"] : []), "Paiement", "Statut"];
     const rows = filteredSales.map(s => {
       const d = new Date(s.createdAt);
-      const salonName = db.getSalons().find(sal => sal.id === s.salonId)?.name || 'N/A';
       return [
         s.id,
         d.toLocaleDateString(),
         d.toLocaleTimeString(),
-        salonName,
+        salon?.name || 'N/A',
         s.staffName,
         s.totalCA + "€",
         (s.totalProducts || 0) + "€",
@@ -65,14 +78,10 @@ const HistoryScreen = () => {
     document.body.removeChild(link);
   };
 
-  const handleCancelSale = () => {
+  const handleCancelSale = async () => {
     if (!selectedSale || !cancelReason) return;
-    db.cancelSale(selectedSale.id, cancelReason);
-    if (salon) {
-      let salonSales = db.getSales(salon.id);
-      if (isStaff) salonSales = salonSales.filter(s => s.staffId === user?.id);
-      setSales(salonSales);
-    }
+    await sbCancelSale(selectedSale.id, cancelReason);
+    await loadData();
     setSelectedSale(null);
     setCancelReason("");
   };
@@ -138,6 +147,12 @@ const HistoryScreen = () => {
         </div>
       </header>
 
+      {loading && (
+        <div className="flex items-center justify-center py-10">
+          <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-900 rounded-full animate-spin"></div>
+        </div>
+      )}
+
       <div className="bg-white rounded-[3rem] border border-slate-200 shadow-sm overflow-hidden overflow-x-auto no-scrollbar">
         <table className="w-full text-left min-w-[800px]">
           <thead className="bg-slate-50 border-b border-slate-200">
@@ -154,15 +169,19 @@ const HistoryScreen = () => {
           <tbody className="divide-y divide-slate-100">
             {filteredSales.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-8 py-20 text-center text-slate-300 font-black uppercase italic tracking-widest text-xs">
+                <td colSpan={7} className="px-8 py-20 text-center text-slate-300 font-black uppercase italic tracking-widest text-xs">
                   Aucun ticket trouvé pour cette période
                 </td>
               </tr>
             ) : (
               filteredSales.map(sale => (
-                <tr key={sale.id} className={`hover:bg-slate-50/50 transition-colors ${sale.status === 'cancelled' ? 'opacity-40 grayscale' : ''}`}>
+                <tr
+                  key={sale.id}
+                  className={`hover:bg-slate-50/50 transition-colors cursor-pointer ${sale.status === 'cancelled' ? 'opacity-40 grayscale' : ''}`}
+                  onClick={() => isManagement && sale.status === 'valid' && setSelectedSale(sale)}
+                >
                   <td className="px-8 py-6">
-                    <div className="font-mono text-[10px] text-slate-400 mb-0.5">{sale.id}</div>
+                    <div className="font-mono text-[10px] text-slate-400 mb-0.5">{sale.id.slice(0, 8)}</div>
                     <div className="text-sm font-bold text-slate-900">{new Date(sale.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
                   </td>
                   <td className="px-8 py-6 font-black text-xs uppercase tracking-tight text-slate-700">{sale.staffName}</td>
@@ -187,6 +206,44 @@ const HistoryScreen = () => {
           </tbody>
         </table>
       </div>
+
+      {/* Modal annulation */}
+      {selectedSale && (
+        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-xl flex items-end md:items-center justify-center z-[100] p-0 md:p-4 animate-in fade-in duration-300">
+          <div className="bg-white w-full max-w-md rounded-t-[2.5rem] md:rounded-[2.5rem] p-8 shadow-2xl space-y-6">
+            <h3 className="text-2xl font-black text-slate-900 tracking-tighter uppercase italic">Annuler ce Ticket ?</h3>
+            <div className="p-6 bg-slate-50 rounded-2xl space-y-1">
+              <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ticket #{selectedSale.id.slice(0, 8)}</div>
+              <div className="text-xl font-black text-slate-900">{selectedSale.totalCA}€ — {selectedSale.staffName}</div>
+            </div>
+            <div>
+              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Motif d'annulation (obligatoire)</label>
+              <textarea
+                rows={3}
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-bold outline-none focus:ring-4 focus:ring-rose-500/10 resize-none"
+                placeholder="Ex: Erreur de saisie, remboursement client..."
+              />
+            </div>
+            <div className="flex gap-4">
+              <button
+                disabled={!cancelReason.trim()}
+                onClick={handleCancelSale}
+                className="flex-[2] py-5 bg-rose-500 text-white rounded-2xl font-black uppercase tracking-widest text-xs disabled:opacity-30 active:scale-95 transition-all"
+              >
+                Confirmer l'annulation
+              </button>
+              <button
+                onClick={() => { setSelectedSale(null); setCancelReason(""); }}
+                className="flex-1 py-5 bg-slate-100 text-slate-500 rounded-2xl font-black uppercase tracking-widest text-[10px]"
+              >
+                Conserver
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

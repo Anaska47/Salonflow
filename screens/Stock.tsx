@@ -1,8 +1,13 @@
 
 import React, { useState, useEffect } from 'react';
-import { db } from '../services/mockDb';
 import { useAuth } from '../App';
 import { Product, UserRole } from '../types';
+import {
+  sbGetProducts,
+  sbUpsertProduct,
+  sbUpdateStock,
+  sbDeleteProduct,
+} from '../services/supabaseService';
 
 const StockScreen = () => {
   const { salon, user } = useAuth();
@@ -11,38 +16,46 @@ const StockScreen = () => {
   const [editingProduct, setEditingProduct] = useState<Partial<Product> | null>(null);
   const [delta, setDelta] = useState<number>(0);
   const [searchQuery, setSearchQuery] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    if (salon) setProducts(db.getProducts(salon.id));
-  }, [salon]);
-
-  const handleUpdateStockDelta = (p: Product, d: number) => {
-    // Sécurité stricte contre le stock négatif
-    if (p.stockQty + d < 0) return;
-    db.updateStock(p.id, d);
-    setProducts(db.getProducts(salon!.id));
+  const loadProducts = async () => {
+    if (!salon) return;
+    setLoading(true);
+    const data = await sbGetProducts(salon.id);
+    setProducts(data);
+    setLoading(false);
   };
 
-  const handleSaveProduct = () => {
+  useEffect(() => {
+    loadProducts();
+  }, [salon]);
+
+  const handleUpdateStockDelta = async (p: Product, d: number) => {
+    if (p.stockQty + d < 0) return;
+    await sbUpdateStock(p.id, d);
+    await loadProducts();
+  };
+
+  const handleSaveProduct = async () => {
     if (!editingProduct?.name || editingProduct?.price === undefined || editingProduct?.stockQty === undefined) return;
 
-    // Protection à l'enregistrement des données
     const safeProduct = {
       ...editingProduct,
+      salonId: salon!.id,
       price: Math.max(0, editingProduct.price),
       stockQty: Math.max(0, editingProduct.stockQty),
-      alertThreshold: Math.max(0, editingProduct.alertThreshold || 0)
+      alertThreshold: Math.max(0, editingProduct.alertThreshold || 0),
     };
 
-    db.updateProduct({ ...safeProduct, salonId: salon!.id } as Product);
-    setProducts(db.getProducts(salon!.id));
+    await sbUpsertProduct(safeProduct as Product & { salonId: string });
+    await loadProducts();
     setEditingProduct(null);
   };
 
-  const handleDeleteProduct = (id: string) => {
+  const handleDeleteProduct = async (id: string) => {
     if (window.confirm("Retirer définitivement ce produit de l'inventaire ?")) {
-      db.deleteProduct(id, user!.role);
-      setProducts(db.getProducts(salon!.id));
+      await sbDeleteProduct(id);
+      await loadProducts();
     }
   };
 
@@ -79,6 +92,12 @@ const StockScreen = () => {
           )}
         </div>
       </header>
+
+      {loading && (
+        <div className="flex items-center justify-center py-20">
+          <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-900 rounded-full animate-spin"></div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
         {products
@@ -293,9 +312,9 @@ const StockScreen = () => {
 
             <div className="space-y-4">
               <button
-                onClick={() => {
-                  db.updateStock(selectedProductForStock.id, delta);
-                  setProducts(db.getProducts(salon!.id));
+                onClick={async () => {
+                  await sbUpdateStock(selectedProductForStock.id, delta);
+                  await loadProducts();
                   setSelectedProductForStock(null);
                   setDelta(0);
                 }}

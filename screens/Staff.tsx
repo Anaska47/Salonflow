@@ -1,11 +1,11 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { db } from '../services/mockDb';
 import { useAuth } from '../App';
 import { User, UserRole, Salon, Sale } from '../types';
 import { Navigate } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
 import { mailService } from '../services/mailService';
+import { sbGetAllSales } from '../services/supabaseService';
 
 const StaffScreen = () => {
   const { user: currentUser, refreshData } = useAuth();
@@ -104,15 +104,21 @@ const StaffScreen = () => {
     setActivePreset(days === 7 ? '7' : '30');
   };
 
-  const salesData = useMemo(() => {
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
-    const rawSales = allSalons.flatMap(s => db.getSales(s.id));
-    return rawSales.filter(s => {
-      const d = new Date(s.createdAt);
-      return s.status === 'valid' && d >= start && d <= end;
-    });
+  const [salesData, setSalesData] = useState<Sale[]>([]);
+
+  useEffect(() => {
+    const loadSales = async () => {
+      if (allSalons.length === 0) return;
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      const data = await sbGetAllSales(
+        allSalons.map(s => s.id),
+        startDate,
+        endDate
+      );
+      setSalesData(data);
+    };
+    loadSales();
   }, [startDate, endDate, allSalons]);
 
   const presenceMap = useMemo(() => {
@@ -204,7 +210,7 @@ const StaffScreen = () => {
     }
   };
 
-  const handleDeleteUser = (id: string) => {
+  const handleDeleteUser = async (id: string) => {
     const target = users.find(u => u.id === id);
     if (!target) return;
 
@@ -214,8 +220,8 @@ const StaffScreen = () => {
     }
 
     if (window.confirm(`Confirmez-vous la révocation totale des accès de ${target.name} ?`)) {
-      db.deleteUser(id);
-      setUsers([...db.getOrganizationUsers(currentUser!.id)]);
+      await supabase.from('staff').delete().eq('id', id);
+      await loadInitialData();
     }
   };
 

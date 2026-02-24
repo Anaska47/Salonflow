@@ -1,21 +1,25 @@
 
-import React, { useState, useMemo } from 'react';
-import { db } from '../services/mockDb';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../App';
-import { User, UserRole, Sale } from '../types';
+import { User, UserRole, Sale, Salon } from '../types';
 import { Navigate } from 'react-router-dom';
+import { sbGetAllSales, sbGetSalons } from '../services/supabaseService';
+import { supabase } from '../services/supabaseClient';
 
 const AttendanceAuditScreen = () => {
   const { user: currentUser, salon: activeSalon } = useAuth();
 
-  // SÉCURITÉ : Un coiffeur (STAFF) ne peut pas accéder à l'audit RH du salon
+  // SÉCURITÉ : Un coiffeur (STAFF) ne peut pas accéder à l'audit RH
   if (currentUser?.role === UserRole.STAFF) {
     return <Navigate to="/" replace />;
   }
 
-  // Le sélecteur de salon doit être disponible si l'utilisateur a plusieurs salons
   const [selectedSalonId, setSelectedSalonId] = useState<string>(activeSalon?.id || 'all');
   const [exportMode, setExportMode] = useState<'both' | 'ca_only'>('both');
+  const [salons, setSalons] = useState<Salon[]>([]);
+  const [usersInScope, setUsersInScope] = useState<User[]>([]);
+  const [salesData, setSalesData] = useState<Sale[]>([]);
+  const [loading, setLoading] = useState(false);
 
   const [startDate, setStartDate] = useState<string>(() => {
     const d = new Date();
@@ -24,44 +28,79 @@ const AttendanceAuditScreen = () => {
   });
   const [endDate, setEndDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
 
-  const salons = useMemo(() => {
-    const all = db.getSalons();
-    // Filtre les salons auxquels l'utilisateur a accès
-    return currentUser?.role === UserRole.OWNER
-      ? all
-      : all.filter(s => currentUser?.salons.includes(s.id));
+  // Load salons
+  useEffect(() => {
+    const loadSalons = async () => {
+      if (!currentUser?.id) return;
+      const ownerId = currentUser.role === UserRole.OWNER ? currentUser.id : currentUser.ownerId || currentUser.id;
+      const data = await sbGetSalons(ownerId);
+      // Filter by access
+      const accessible = currentUser.role === UserRole.OWNER
+        ? data
+        : data.filter(s => currentUser.salons.includes(s.id));
+      setSalons(accessible);
+    };
+    loadSalons();
   }, [currentUser]);
+
+  // Load users and sales via supabase
+  useEffect(() => {
+    const loadData = async () => {
+      if (!currentUser || salons.length === 0) return;
+      setLoading(true);
+
+      const salonIds = selectedSalonId === 'all'
+        ? salons.map(s => s.id)
+        : [selectedSalonId];
+
+      // Load staff from Supabase
+      const [staffRes, ownerRes] = await Promise.all([
+        supabase.from('staff').select('id, name, email, role, salons, status, is_bookable, can_view_own_schedule, owner_id').in('salons', salonIds),
+        supabase.from('profiles').select('id, name, email, role, salons, owner_id').eq('id', currentUser.id),
+      ]);
+
+      const staffList: User[] = (staffRes.data || []).map((s: any) => ({
+        id: s.id,
+        email: s.email,
+        name: s.name,
+        role: s.role as UserRole,
+        salons: s.salons || [],
+        ownerId: s.owner_id,
+        isBookable: s.is_bookable,
+        canViewOwnSchedule: s.can_view_own_schedule,
+        status: s.status,
+      }));
+
+      // Add owner
+      if (ownerRes.data && ownerRes.data.length > 0) {
+        const o = ownerRes.data[0];
+        staffList.unshift({
+          id: o.id,
+          email: o.email,
+          name: o.name,
+          role: o.role as UserRole,
+          salons: o.salons || [],
+          ownerId: o.owner_id,
+          isBookable: true,
+          canViewOwnSchedule: true,
+          status: 'ACTIVE',
+        });
+      }
+      setUsersInScope(staffList);
+
+      // Load sales
+      const sales = await sbGetAllSales(salonIds, startDate, endDate);
+      setSalesData(sales);
+
+      setLoading(false);
+    };
+    loadData();
+  }, [selectedSalonId, startDate, endDate, salons, currentUser]);
 
   const currentSalonName = useMemo(() => {
     if (selectedSalonId === 'all') return "Groupe Entier";
     return salons.find(s => s.id === selectedSalonId)?.name || "Salon";
   }, [selectedSalonId, salons]);
-
-  const usersInScope = useMemo(() => {
-    const allUsers = db.getUsers();
-    if (selectedSalonId === 'all') {
-      return allUsers.filter(u => salons.some(s => u.salons.includes(s.id)));
-    }
-    return allUsers.filter(u => u.salons.includes(selectedSalonId));
-  }, [selectedSalonId, salons]);
-
-  const salesData = useMemo(() => {
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
-
-    let rawSales: Sale[] = [];
-    if (selectedSalonId === 'all') {
-      rawSales = salons.flatMap(s => db.getSales(s.id));
-    } else {
-      rawSales = db.getSales(selectedSalonId);
-    }
-
-    return rawSales.filter(s => {
-      const d = new Date(s.createdAt);
-      return s.status === 'valid' && d >= start && d <= end;
-    });
-  }, [startDate, endDate, selectedSalonId, salons]);
 
   const auditReport = useMemo(() => {
     const report: Record<string, { daysWorked: Set<string>, totalCA: number, totalProducts: number, totalTips: number }> = {};
@@ -89,15 +128,8 @@ const AttendanceAuditScreen = () => {
 
     const BOM = "\uFEFF";
     const headers = [
-      "Collaborateur",
-      "Role",
-      "Salon",
-      "Jours Actifs",
-      "Taux Activite %",
-      "CA Genere",
-      ...(exportMode === 'both' ? ["Tips Generes"] : []),
-      "Debut",
-      "Fin"
+      "Collaborateur", "Role", "Salon", "Jours Actifs", "Taux Activite %",
+      "CA Genere", ...(exportMode === 'both' ? ["Tips Generes"] : []), "Debut", "Fin"
     ];
 
     const rows = usersInScope.map(u => {
@@ -105,15 +137,11 @@ const AttendanceAuditScreen = () => {
       const salonName = salons.filter(s => u.salons.includes(s.id)).map(s => s.name).join(', ');
 
       return [
-        u.name,
-        u.role,
-        salonName,
-        data.daysWorked.size,
+        u.name, u.role, salonName, data.daysWorked.size,
         Math.round((data.daysWorked.size / diffDays) * 100) + "%",
         data.totalCA + "€",
         ...(exportMode === 'both' ? [data.totalTips + "€"] : []),
-        startDate,
-        endDate
+        startDate, endDate
       ];
     });
 
@@ -122,10 +150,7 @@ const AttendanceAuditScreen = () => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-
-    const fileName = `AUDIT_PRESENCE_${currentSalonName.replace(/\s+/g, '_')}_${startDate}_${endDate}.csv`;
-    link.setAttribute("download", fileName);
-
+    link.setAttribute("download", `AUDIT_PRESENCE_${currentSalonName.replace(/\s+/g, '_')}_${startDate}_${endDate}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -149,7 +174,7 @@ const AttendanceAuditScreen = () => {
               <select
                 value={selectedSalonId}
                 onChange={(e) => setSelectedSalonId(e.target.value)}
-                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-[11px] font-black outline-none focus:ring-2 focus:ring-emerald-500/10 appearance-none cursor-pointer"
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-[11px] font-black outline-none appearance-none cursor-pointer"
               >
                 <option value="all" className="text-slate-900">Tout le Groupe ({salons.length} sites)</option>
                 {salons.map(s => (
@@ -189,6 +214,12 @@ const AttendanceAuditScreen = () => {
         </div>
       </header>
 
+      {loading && (
+        <div className="flex items-center justify-center py-10">
+          <div className="w-8 h-8 border-4 border-slate-200 border-t-emerald-500 rounded-full animate-spin"></div>
+        </div>
+      )}
+
       <div className="bg-white rounded-[3rem] border border-slate-200 shadow-sm overflow-hidden">
         <div className="overflow-x-auto no-scrollbar">
           <table className="w-full text-left">
@@ -204,9 +235,9 @@ const AttendanceAuditScreen = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {usersInScope.length === 0 ? (
+              {usersInScope.length === 0 && !loading ? (
                 <tr>
-                  <td colSpan={6} className="px-8 py-20 text-center text-slate-300 font-black uppercase italic tracking-widest text-xs">
+                  <td colSpan={7} className="px-8 py-20 text-center text-slate-300 font-black uppercase italic tracking-widest text-xs">
                     Aucun collaborateur trouvé pour ce périmètre
                   </td>
                 </tr>
@@ -262,11 +293,11 @@ const AttendanceAuditScreen = () => {
                         <div className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">PB</div>
                       </td>
                       <td className="px-8 py-6 text-right">
-                        <div className="text-base font-black text-indigo-600 italic">{(data as any).totalProducts || 0}€</div>
+                        <div className="text-base font-black text-indigo-600 italic">{data.totalProducts}€</div>
                         <div className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Revente</div>
                       </td>
                       <td className="px-8 py-6 text-right">
-                        <div className="text-base font-black text-slate-900 italic">{data.totalCA}€</div>
+                        <div className="text-base font-black text-slate-900 italic">{Math.round(data.totalCA)}€</div>
                         <div className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">Production</div>
                       </td>
                     </tr>

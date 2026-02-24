@@ -1,9 +1,9 @@
 
 import React, { useMemo, useState, useEffect } from 'react';
 import { useAuth } from '../App';
-import { db } from '../services/mockDb';
 import { Link } from 'react-router-dom';
 import { ICONS } from '../constants';
+import { sbGetAllSales } from '../services/supabaseService';
 import {
   AreaChart,
   Area,
@@ -34,6 +34,7 @@ const DashboardScreen = () => {
     return 'current';
   });
   const [liveSales, setLiveSales] = useState<any[]>([]);
+  const [allSalesCache, setAllSalesCache] = useState<any[]>([]);  // Cache Supabase
 
   // États pour la plage de dates
   const [startDate, setStartDate] = useState<string>(() => {
@@ -86,12 +87,9 @@ const DashboardScreen = () => {
     setActivePreset(days === 7 ? '7' : '30');
   };
 
-  // Simulation du flux "Temps Réel"
+  // Chargement des ventes depuis Supabase
   useEffect(() => {
-    const fetchLiveSales = () => {
-      let sales: any[] = [];
-      const ownerId = user?.role === UserRole.OWNER ? user.id : user?.ownerId || '';
-
+    const loadSales = async () => {
       let salonsInScope = [];
       if (dashboardScope === 'all') {
         salonsInScope = salons;
@@ -101,20 +99,25 @@ const DashboardScreen = () => {
         const specific = salons.find(s => s.id === dashboardScope);
         salonsInScope = specific ? [specific] : [];
       }
+      if (salonsInScope.length === 0 && activeSalon) salonsInScope = [activeSalon];
+      if (salonsInScope.length === 0) return;
 
-      sales = salonsInScope.flatMap(s => db.getSales(s.id));
+      const salonIds = salonsInScope.map(s => s.id);
+      let sales = await sbGetAllSales(salonIds);
 
-      // FILTRAGE DE SÉCURITÉ : Un coiffeur ne voit que son flux
+      // Filtrage sécurité staff
       if (isStaff) {
         sales = sales.filter(s => s.staffId === user?.id);
       }
 
-      const limitedSales = sales
+      setAllSalesCache(sales);
+
+      const limited = sales
         .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
         .slice(0, 10);
-      setLiveSales(limitedSales);
+      setLiveSales(limited);
     };
-    fetchLiveSales();
+    loadSales();
   }, [activeSalon, dashboardScope, user, isOwner, isStaff, salons]);
 
   const insights = useMemo(() => {
@@ -132,25 +135,24 @@ const DashboardScreen = () => {
       salonsInScope = specific ? [specific] : [];
     }
 
-    // Fallback de sécurité : Si on a un salon actif mais qu'il n'est pas dans les périmètres, on le rajoute
     if (salonsInScope.length === 0 && activeSalon) {
       salonsInScope = [activeSalon];
     }
 
-    if (salonsInScope.length === 0) return null;
+    if (salonsInScope.length === 0 || allSalesCache.length === 0) return null;
 
-    // 1. Performance Multi-sites (Détail par salon)
+    // Filter cached sales by date range and scope
+    const scopeSalonIds = salonsInScope.map(s => s.id);
+    const filteredSales = allSalesCache.filter(sale => {
+      const d = new Date(sale.createdAt);
+      return scopeSalonIds.includes(sale.salonId) &&
+        sale.status === 'valid' && d >= start && d <= end;
+    });
+
+    // 1. Performance Multi-sites
     const salonPerformance = salonsInScope.map((s, idx) => {
-      let salonSales = db.getSales(s.id).filter(sale => {
-        const d = new Date(sale.createdAt);
-        return sale.status === 'valid' && d >= start && d <= end;
-      });
-
-      // FILTRAGE DE SÉCURITÉ : Un coiffeur ne voit que son propre CA par salon
-      if (isStaff) {
-        salonSales = salonSales.filter(sale => sale.staffId === user?.id);
-      }
-
+      let salonSales = filteredSales.filter(sale => sale.salonId === s.id);
+      if (isStaff) salonSales = salonSales.filter(sale => sale.staffId === user?.id);
       return {
         name: s.name,
         ca: salonSales.reduce((acc, sale) => acc + sale.totalCA, 0),
@@ -159,13 +161,10 @@ const DashboardScreen = () => {
       };
     }).sort((a, b) => b.ca - a.ca);
 
-    // 2. Data Consolidée (Réelle)
-    let allRelevantSales = salonsInScope.flatMap(s => db.getSales(s.id)).filter(sale => {
-      const d = new Date(sale.createdAt);
-      let match = sale.status === 'valid' && d >= start && d <= end;
-      if (isStaff) match = match && sale.staffId === user?.id;
-      return match;
-    });
+    // 2. Data Consolidée (filtrée par staff si nécessaire)
+    let allRelevantSales = isStaff
+      ? filteredSales.filter(sale => sale.staffId === user?.id)
+      : filteredSales;
 
     // MODE DÉMO : Si aucune donnée réelle, on génère du spectacle !
     if (allRelevantSales.length === 0 && salonsInScope.length > 0) {
@@ -296,7 +295,7 @@ const DashboardScreen = () => {
       topItems,
       totalTickets: allRelevantSales.length
     };
-  }, [activeSalon, user, isOwner, isStaff, startDate, endDate, dashboardScope, salons]);
+  }, [activeSalon, user, isOwner, isStaff, startDate, endDate, dashboardScope, salons, allSalesCache]);
 
   return (
     <div className="p-6 md:p-12 max-w-7xl mx-auto space-y-10">

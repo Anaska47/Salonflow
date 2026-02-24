@@ -1,40 +1,48 @@
 
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { db } from '../services/mockDb';
-import { Salon, Service, User, Appointment } from '../types';
+import { Salon, Service } from '../types';
+import { sbGetSalonById, sbGetServices, sbCreateAppointment } from '../services/supabaseService';
+import { supabase } from '../services/supabaseClient';
 
 const PublicBookingScreen = () => {
   const { salonId } = useParams<{ salonId: string }>();
   const [salon, setSalon] = useState<Salon | null>(null);
   const [services, setServices] = useState<Service[]>([]);
-  const [staff, setStaff] = useState<User[]>([]);
-  
+  const [staff, setStaff] = useState<{ id: string; name: string }[]>([]);
+
   const [step, setStep] = useState(1);
   const [selectedService, setSelectedService] = useState<Service | null>(null);
-  const [selectedStaff, setSelectedStaff] = useState<User | null>(null);
+  const [selectedStaff, setSelectedStaff] = useState<{ id: string; name: string } | null>(null);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedTime, setSelectedTime] = useState("");
   const [clientInfo, setClientInfo] = useState({ name: "", phone: "" });
   const [isSuccess, setIsSuccess] = useState(false);
 
   useEffect(() => {
-    if (salonId) {
-      const allSalons = db.getSalons();
-      const s = allSalons.find(x => x.id === salonId);
+    const loadData = async () => {
+      if (!salonId) return;
+      const s = await sbGetSalonById(salonId);
       if (s) {
         setSalon(s);
-        setServices(db.getServices(s.id).filter(sv => sv.isActive));
-        // IMPORTANT : On ne filtre que les membres autorisés par le patron à être réservés en ligne
-        setStaff(db.getUsers().filter(u => u.salons.includes(s.id) && u.isBookable));
+        const [svcs, staffRes] = await Promise.all([
+          sbGetServices(s.id),
+          supabase.from('staff').select('id, name, is_bookable, salons').eq('is_bookable', true),
+        ]);
+        setServices(svcs.filter(sv => sv.isActive));
+        const staffInSalon = (staffRes.data || [])
+          .filter((u: any) => (u.salons || []).includes(s.id))
+          .map((u: any) => ({ id: u.id, name: u.name }));
+        setStaff(staffInSalon);
       }
-    }
+    };
+    loadData();
   }, [salonId]);
 
-  const handleBooking = () => {
+  const handleBooking = async () => {
     if (!salon || !selectedService || !selectedStaff || !selectedTime || !clientInfo.name) return;
-    
-    db.addAppointment({
+
+    await sbCreateAppointment({
       salonId: salon.id,
       staffId: selectedStaff.id,
       staffName: selectedStaff.name,
@@ -43,10 +51,9 @@ const PublicBookingScreen = () => {
       clientName: clientInfo.name,
       clientPhone: clientInfo.phone,
       startTime: `${selectedDate}T${selectedTime}:00`,
-      duration: 30,
-      status: 'pending'
+      duration: selectedService.duration || 30,
     });
-    
+
     setIsSuccess(true);
   };
 
@@ -54,12 +61,12 @@ const PublicBookingScreen = () => {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6 text-white text-center">
         <div className="max-w-sm space-y-6">
-           <div className="w-24 h-24 bg-emerald-500 rounded-full flex items-center justify-center mx-auto shadow-2xl animate-bounce">
-              <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" strokeWidth={4}/></svg>
-           </div>
-           <h1 className="text-3xl font-black italic tracking-tighter uppercase">Réservation Transmise</h1>
-           <p className="text-white/60 font-medium">Votre demande pour <span className="text-white">{selectedService?.name}</span> avec <span className="text-white">{selectedStaff?.name}</span> est en attente de validation.</p>
-           <button onClick={() => window.location.reload()} className="w-full py-4 bg-white text-slate-900 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl">Prendre un autre RDV</button>
+          <div className="w-24 h-24 bg-emerald-500 rounded-full flex items-center justify-center mx-auto shadow-2xl animate-bounce">
+            <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M5 13l4 4L19 7" strokeWidth={4} /></svg>
+          </div>
+          <h1 className="text-3xl font-black italic tracking-tighter uppercase">Réservation Transmise</h1>
+          <p className="text-white/60 font-medium">Votre demande pour <span className="text-white">{selectedService?.name}</span> avec <span className="text-white">{selectedStaff?.name}</span> est en attente de validation.</p>
+          <button onClick={() => window.location.reload()} className="w-full py-4 bg-white text-slate-900 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl">Prendre un autre RDV</button>
         </div>
       </div>
     );
@@ -70,18 +77,18 @@ const PublicBookingScreen = () => {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
       <header className="bg-slate-900 text-white p-6 pb-12 rounded-b-[3rem] shadow-xl">
-         <div className="text-[10px] font-black text-emerald-400 uppercase tracking-[0.4em] mb-2">Réservation en ligne sécurisée</div>
-         <h1 className="text-3xl font-black italic tracking-tighter uppercase leading-none">{salon.name}</h1>
-         <div className="text-[10px] font-bold text-white/40 uppercase mt-2">{salon.address}</div>
+        <div className="text-[10px] font-black text-emerald-400 uppercase tracking-[0.4em] mb-2">Réservation en ligne sécurisée</div>
+        <h1 className="text-3xl font-black italic tracking-tighter uppercase leading-none">{salon.name}</h1>
+        <div className="text-[10px] font-bold text-white/40 uppercase mt-2">{salon.address}</div>
       </header>
 
       <div className="-mt-8 px-4 flex-1 pb-24">
         <div className="bg-white rounded-[2.5rem] shadow-2xl border border-slate-100 p-8 space-y-8 max-w-xl mx-auto">
-          
+
           <div className="flex justify-between px-4">
-             {[1, 2, 3, 4].map(i => (
-               <div key={i} className={`h-1 flex-1 mx-1 rounded-full transition-all ${step >= i ? 'bg-slate-900' : 'bg-slate-100'}`}></div>
-             ))}
+            {[1, 2, 3, 4].map(i => (
+              <div key={i} className={`h-1 flex-1 mx-1 rounded-full transition-all ${step >= i ? 'bg-slate-900' : 'bg-slate-100'}`}></div>
+            ))}
           </div>
 
           {step === 1 && (
@@ -134,20 +141,20 @@ const PublicBookingScreen = () => {
             <div className="space-y-6 animate-in slide-in-from-right">
               <h2 className="text-xl font-black uppercase italic tracking-tighter">4. Validation</h2>
               <div className="space-y-4">
-                 <input type="text" placeholder="Nom Complet" value={clientInfo.name} onChange={(e) => setClientInfo({ ...clientInfo, name: e.target.value })} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-black text-sm outline-none" />
-                 <input type="tel" placeholder="Mobile" value={clientInfo.phone} onChange={(e) => setClientInfo({ ...clientInfo, phone: e.target.value })} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-black text-sm outline-none" />
-              </div>
-              
-              <div className="p-6 bg-slate-900 rounded-3xl space-y-3 shadow-xl text-white">
-                 <div className="text-[10px] font-black uppercase text-white/40">Détails RDV</div>
-                 <div className="flex justify-between text-base font-black italic">
-                    <span>{selectedService?.name}</span>
-                    <span>{selectedService?.price}€</span>
-                 </div>
-                 <div className="text-[10px] font-bold text-emerald-400 uppercase italic">Avec {selectedStaff?.name} le {new Date(selectedDate).toLocaleDateString()} à {selectedTime}</div>
+                <input type="text" placeholder="Nom Complet" value={clientInfo.name} onChange={(e) => setClientInfo({ ...clientInfo, name: e.target.value })} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-black text-sm outline-none" />
+                <input type="tel" placeholder="Mobile" value={clientInfo.phone} onChange={(e) => setClientInfo({ ...clientInfo, phone: e.target.value })} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl font-black text-sm outline-none" />
               </div>
 
-              <button 
+              <div className="p-6 bg-slate-900 rounded-3xl space-y-3 shadow-xl text-white">
+                <div className="text-[10px] font-black uppercase text-white/40">Détails RDV</div>
+                <div className="flex justify-between text-base font-black italic">
+                  <span>{selectedService?.name}</span>
+                  <span>{selectedService?.price}€</span>
+                </div>
+                <div className="text-[10px] font-bold text-emerald-400 uppercase italic">Avec {selectedStaff?.name} le {new Date(selectedDate).toLocaleDateString()} à {selectedTime}</div>
+              </div>
+
+              <button
                 onClick={handleBooking}
                 disabled={!clientInfo.name || !clientInfo.phone}
                 className="w-full py-5 bg-emerald-500 text-white rounded-[2rem] font-black uppercase text-xs tracking-[0.2em] shadow-2xl active:scale-95 transition-all disabled:opacity-20"

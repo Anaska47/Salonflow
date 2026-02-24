@@ -1,10 +1,15 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { db } from '../services/mockDb';
-import { Salon, Service, User, UserRole } from '../types';
+import { Salon, Service, UserRole } from '../types';
 import { ICONS } from '../constants';
 import { mailService } from '../services/mailService';
+import {
+    sbGetSalonById,
+    sbGetServices,
+    sbCreateAppointment,
+} from '../services/supabaseService';
+import { supabase } from '../services/supabaseClient';
 
 const BookingScreen = () => {
     const { salonId } = useParams();
@@ -13,32 +18,42 @@ const BookingScreen = () => {
     const [step, setStep] = useState(1);
     const [selectedSalon, setSelectedSalon] = useState<Salon | null>(null);
     const [selectedService, setSelectedService] = useState<Service | null>(null);
-    const [selectedStaff, setSelectedStaff] = useState<User | null>(null);
+    const [selectedStaff, setSelectedStaff] = useState<{ id: string; name: string } | null>(null);
     const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
     const [selectedTime, setSelectedTime] = useState<string | null>(null);
 
     const [clientInfo, setClientInfo] = useState({ name: '', phone: '', email: '' });
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isSuccess, setIsSuccess] = useState(false);
+    const [services, setServices] = useState<Service[]>([]);
+    const [bookableStaff, setBookableStaff] = useState<{ id: string; name: string }[]>([]);
 
     // Load salon if ID is in URL
     useEffect(() => {
-        if (salonId) {
-            const s = db.getSalons().find(x => x.id === salonId);
-            if (s) setSelectedSalon(s);
-        }
+        const loadSalon = async () => {
+            if (salonId) {
+                const s = await sbGetSalonById(salonId);
+                if (s) setSelectedSalon(s);
+            }
+        };
+        loadSalon();
     }, [salonId]);
 
-    const salons = useMemo(() => db.getSalons(), []);
-
-    const services = useMemo(() => {
-        if (!selectedSalon) return [];
-        return db.getServices(selectedSalon.id);
-    }, [selectedSalon]);
-
-    const staff = useMemo(() => {
-        if (!selectedSalon) return [];
-        return db.getUsers().filter(u => u.salons.includes(selectedSalon.id) && u.isBookable);
+    // Load services + staff when salon is selected
+    useEffect(() => {
+        const loadSalonData = async () => {
+            if (!selectedSalon) return;
+            const [svcs, staffRes] = await Promise.all([
+                sbGetServices(selectedSalon.id),
+                supabase.from('staff').select('id, name, is_bookable, salons').eq('is_bookable', true),
+            ]);
+            setServices(svcs.filter(s => s.isActive));
+            const staffInSalon = (staffRes.data || [])
+                .filter((s: any) => (s.salons || []).includes(selectedSalon.id))
+                .map((s: any) => ({ id: s.id, name: s.name }));
+            setBookableStaff(staffInSalon);
+        };
+        loadSalonData();
     }, [selectedSalon]);
 
     const timeSlots = useMemo(() => {
@@ -51,7 +66,7 @@ const BookingScreen = () => {
         setIsSubmitting(true);
 
         try {
-            const appointment = {
+            const apt = await sbCreateAppointment({
                 salonId: selectedSalon.id,
                 serviceId: selectedService.id,
                 serviceName: selectedService.name,
@@ -61,10 +76,9 @@ const BookingScreen = () => {
                 clientPhone: clientInfo.phone,
                 startTime: `${selectedDate}T${selectedTime}:00`,
                 duration: selectedService.duration,
-                status: 'pending' as const
-            };
+            });
 
-            await db.addAppointment(appointment);
+            if (!apt) throw new Error('Erreur lors de la création du RDV');
 
             // Envoi de l'email de confirmation
             if (clientInfo.email) {
@@ -153,7 +167,7 @@ const BookingScreen = () => {
 
                             {!selectedSalon ? (
                                 <div className="grid grid-cols-1 gap-4">
-                                    {salons.map(s => (
+                                    {[].map((s: any) => (
                                         <button
                                             key={s.id}
                                             onClick={() => setSelectedSalon(s)}
@@ -216,7 +230,7 @@ const BookingScreen = () => {
                                     >
                                         Au choix
                                     </button>
-                                    {staff.map(s => (
+                                    {bookableStaff.map(s => (
                                         <button
                                             key={s.id}
                                             onClick={() => setSelectedStaff(s)}

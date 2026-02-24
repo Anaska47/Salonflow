@@ -1,9 +1,15 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { useLocation } from 'react-router-dom';
-import { db } from '../services/mockDb';
 import { useAuth } from '../App';
-import { Appointment, UserRole, User, StaffSchedule } from '../types';
+import { Appointment, UserRole, StaffSchedule } from '../types';
+import {
+  sbGetAppointments,
+  sbGetSchedules,
+  sbToggleStaffSchedule,
+  sbUpdateAppointmentStatus,
+} from '../services/supabaseService';
+import { supabase } from '../services/supabaseClient';
 
 const CalendarScreen = () => {
   const { salon, user } = useAuth();
@@ -16,19 +22,17 @@ const CalendarScreen = () => {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [viewMode, setViewMode] = useState<'month' | 'day' | 'list'>(initialView);
   const [staffFilter, setStaffFilter] = useState<string>(user?.role === UserRole.STAFF ? user.id : 'all');
-  const [isSyncingLocal, setIsSyncingLocal] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [salonStaff, setSalonStaff] = useState<{ id: string; name: string }[]>([]);
 
   const isOwner = user?.role === UserRole.OWNER || user?.role === UserRole.MANAGER;
   const isStaff = user?.role === UserRole.STAFF;
 
-  // LOGIQUE DE SÉCURITÉ CONTEXTUELLE :
-  // On vérifie si le collaborateur est tagué (affecté) pour le jour sélectionné
   const isTaggedToday = useMemo(() => {
     if (!isStaff) return false;
     return schedules.some(s => s.staffId === user?.id && s.date === selectedDate);
   }, [schedules, user, selectedDate, isStaff]);
 
-  // Droit d'accès : Owner/Manager OU Staff avec permission globale OU Staff tagué pour ce jour précis
   const isSelectedDateToday = selectedDate === new Date().toISOString().split('T')[0];
   const hasAccessToSelectedDate = isOwner ||
     (isStaff && (
@@ -36,27 +40,49 @@ const CalendarScreen = () => {
       (user?.canViewOwnSchedule || isTaggedToday)
     ));
 
-  const salonStaff = useMemo(() => db.getUsers().filter(u => u.salons.includes(salon!.id)), [salon]);
-
-  const loadData = () => {
-    if (salon) {
-      setAppointments(db.getAppointments(salon.id));
-      setSchedules(db.getSchedules(salon.id));
-    }
+  const loadData = async () => {
+    if (!salon) return;
+    const [apts, scheds] = await Promise.all([
+      sbGetAppointments(salon.id),
+      sbGetSchedules(salon.id),
+    ]);
+    setAppointments(apts);
+    setSchedules(scheds);
   };
 
   useEffect(() => {
     loadData();
-    const unsub = db.subscribe(() => loadData());
-    return unsub;
+  }, [salon]);
+
+  useEffect(() => {
+    // Load staff for this salon from supabase
+    const loadStaff = async () => {
+      if (!salon) return;
+      const { data } = await supabase
+        .from('staff')
+        .select('id, name, salons')
+        .contains('salons', [salon.id]);
+      // Also include owner from profiles
+      const { data: ownerProfile } = await supabase
+        .from('profiles')
+        .select('id, name')
+        .contains('salons', [salon.id]);
+
+      const combined = [
+        ...(ownerProfile || []),
+        ...(data || []),
+      ];
+      setSalonStaff(combined);
+    };
+    loadStaff();
   }, [salon]);
 
   const handleToggleStaff = async (staffId: string) => {
-    if (!isOwner) return;
-    setIsSyncingLocal(true);
-    await db.toggleStaffSchedule(salon!.id, staffId, selectedDate);
-    loadData();
-    setIsSyncingLocal(false);
+    if (!isOwner || !salon) return;
+    setIsSyncing(true);
+    await sbToggleStaffSchedule(salon.id, staffId, selectedDate);
+    await loadData();
+    setIsSyncing(false);
   };
 
   const monthData = useMemo(() => {
@@ -77,9 +103,9 @@ const CalendarScreen = () => {
     return days;
   }, [selectedDate]);
 
-  const handleStatusChange = (id: string, status: Appointment['status']) => {
-    db.updateAppointmentStatus(id, status);
-    loadData();
+  const handleStatusChange = async (id: string, status: Appointment['status']) => {
+    await sbUpdateAppointmentStatus(id, status);
+    await loadData();
   };
 
   const filteredDailyApts = useMemo(() => {
@@ -121,7 +147,6 @@ const CalendarScreen = () => {
             {monthData.map((day, idx) => {
               if (!day) return <div key={`empty-${idx}`} className="aspect-square bg-slate-50/40 rounded-3xl"></div>;
               const isSelected = day === selectedDate;
-              // La "Petite Lumière" pour le Staff
               const isUserScheduled = isStaff && schedules.some(s => s.staffId === user?.id && s.date === day);
 
               return (
@@ -132,7 +157,6 @@ const CalendarScreen = () => {
                 >
                   <span className={`text-xl font-black tracking-tighter italic ${isSelected ? 'text-white' : 'text-slate-900'}`}>{new Date(day).getDate()}</span>
 
-                  {/* LA PETITE LUMIÈRE : Indicateur de présence affectée */}
                   {isUserScheduled && (
                     <div className="absolute top-4 right-4 flex flex-col items-center">
                       <div className="w-2.5 h-2.5 bg-emerald-500 rounded-full shadow-[0_0_12px_rgba(16,185,129,0.8)] animate-pulse"></div>
@@ -144,7 +168,7 @@ const CalendarScreen = () => {
                     <div className="flex -space-x-2 overflow-hidden">
                       {schedules.filter(s => s.date === day).slice(0, 3).map(s => (
                         <div key={s.id} className="w-5 h-5 rounded-full border-2 border-white bg-slate-200 text-[7px] font-black flex items-center justify-center text-slate-500">
-                          {salonStaff.find(u => u.id === s.staffId)?.name.charAt(0)}
+                          {salonStaff.find(u => u.id === s.staffId)?.name?.charAt(0) || '?'}
                         </div>
                       ))}
                     </div>
@@ -158,7 +182,6 @@ const CalendarScreen = () => {
 
       {viewMode === 'day' && (
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-          {/* Main View Area */}
           <div className="lg:col-span-3 space-y-6">
             {!hasAccessToSelectedDate ? (
               <div className="bg-white rounded-[3rem] p-16 border border-slate-200 shadow-sm flex flex-col items-center justify-center text-center space-y-8 animate-in slide-in-from-bottom duration-500">
@@ -184,7 +207,6 @@ const CalendarScreen = () => {
                     </div>
                   </div>
 
-                  {/* Badge Lumière pour le jour sélectionné */}
                   {isTaggedToday && (
                     <div className="px-5 py-3 bg-emerald-50 border border-emerald-100 text-emerald-600 rounded-2xl flex items-center gap-3 animate-pulse shadow-sm">
                       <div className="w-2.5 h-2.5 bg-emerald-500 rounded-full shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>
@@ -204,7 +226,7 @@ const CalendarScreen = () => {
                       <div key={apt.id} className="p-6 bg-slate-50 border border-slate-100 rounded-[2rem] flex flex-col md:flex-row justify-between items-center group hover:bg-white hover:border-slate-900 transition-all gap-6">
                         <div className="flex items-center gap-6 w-full md:w-auto">
                           <div className="w-20 text-center border-r border-slate-200 pr-6">
-                            <div className="text-xl font-black italic tracking-tighter text-slate-900">{apt.startTime.split('T')[1].substring(0, 5)}</div>
+                            <div className="text-xl font-black italic tracking-tighter text-slate-900">{apt.startTime.split('T')[1]?.substring(0, 5) || '--:--'}</div>
                             <div className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Heure</div>
                           </div>
                           <div className="flex-1">
@@ -227,9 +249,7 @@ const CalendarScreen = () => {
             )}
           </div>
 
-          {/* Sidebar Area : Équipe & Statistiques */}
           <aside className="space-y-6">
-            {/* TAGGING PANEL (Propriétaire uniquement) */}
             {isOwner && (
               <div className="bg-slate-900 rounded-[3rem] p-8 text-white space-y-6 shadow-2xl relative overflow-hidden">
                 <div className="relative z-10">
@@ -240,7 +260,7 @@ const CalendarScreen = () => {
                       return (
                         <button
                           key={staffMember.id}
-                          disabled={isSyncingLocal}
+                          disabled={isSyncing}
                           onClick={() => handleToggleStaff(staffMember.id)}
                           className={`w-full flex items-center justify-between p-4 rounded-2xl border-2 transition-all ${isActive ? 'bg-emerald-500 border-emerald-400 text-white shadow-lg' : 'bg-white/5 border-white/10 text-white/40 hover:bg-white/10'}`}
                         >
@@ -267,7 +287,6 @@ const CalendarScreen = () => {
               </div>
             )}
 
-            {/* Statistiques rapides du jour */}
             <div className="bg-white rounded-[3rem] p-8 border border-slate-200 shadow-sm space-y-8">
               <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Aperçu Journalier</h3>
               <div className="space-y-6">

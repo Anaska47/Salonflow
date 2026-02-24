@@ -1,9 +1,14 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { db } from '../services/mockDb';
 import { useAuth } from '../App';
 import { errorLogService } from '../services/errorLogService';
 import { ItemType, PaymentMethod, Service, Product } from '../types';
+import {
+  sbGetServices,
+  sbGetProducts,
+  sbCreateSale,
+  sbUpdateStock,
+} from '../services/supabaseService';
 
 const POSScreen = () => {
   const { user, salon } = useAuth();
@@ -19,11 +24,18 @@ const POSScreen = () => {
   const [customName, setCustomName] = useState("Prestation Spéciale");
   const [customPrice, setCustomPrice] = useState("");
 
+  const loadCatalog = async () => {
+    if (!salon) return;
+    const [svcs, prods] = await Promise.all([
+      sbGetServices(salon.id),
+      sbGetProducts(salon.id),
+    ]);
+    setServices(svcs.filter(s => s.isActive));
+    setProducts(prods);
+  };
+
   useEffect(() => {
-    if (salon) {
-      setServices(db.getServices(salon.id).filter(s => s.isActive));
-      setProducts(db.getProducts(salon.id));
-    }
+    loadCatalog();
   }, [salon]);
 
   const totals = useMemo(() => {
@@ -94,7 +106,7 @@ const POSScreen = () => {
       const finalTip = Math.max(0, parseFloat(tip) || 0);
       const finalTotal = totalTicket + finalTip;
 
-      const newSale = await db.addSale({
+      const newSale = await sbCreateSale({
         salonId: salon!.id,
         staffId: user!.id,
         staffName: user!.name,
@@ -104,8 +116,15 @@ const POSScreen = () => {
         tipAmount: finalTip,
         paidAmount: finalTotal,
         paymentMethod,
-        status: 'valid'
       });
+
+      if (!newSale) throw new Error('Erreur lors de la création de la vente');
+
+      // Décrémenter le stock des produits vendus
+      const productItems = cart.filter(i => i.type === ItemType.PRODUCT);
+      for (const item of productItems) {
+        await sbUpdateStock(item.refId, -item.qty);
+      }
 
       errorLogService.log('info', `Vente effectuée`, `ID: ${newSale.id}`, user?.name, salon?.id);
 
@@ -115,9 +134,10 @@ const POSScreen = () => {
       setShowCheckout(false);
       setShowSuccess(true);
       // Refresh stock
-      setProducts(db.getProducts(salon!.id));
+      await loadCatalog();
     } catch (e: any) {
       errorLogService.log('critical', `Erreur encaissement`, e.message, user?.name, salon?.id);
+      alert(`Erreur lors de l'encaissement : ${e.message}`);
     }
   };
 

@@ -1,24 +1,44 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../App';
-import { db } from '../services/mockDb';
+import { supabase } from '../services/supabaseClient';
 import { PLANS, SubscriptionTier } from '../services/subscriptionService';
 
 const BillingScreen = () => {
    const { user } = useAuth();
    const [loading, setLoading] = useState(false);
    const [isAnnual, setIsAnnual] = useState(true);
+   const [invoices, setInvoices] = useState<any[]>([]);
+
+   useEffect(() => {
+      const loadInvoices = async () => {
+         if (!user?.id) return;
+         const { data } = await supabase
+            .from('invoices')
+            .select('*')
+            .eq('user_id', user.id)
+            .order('date', { ascending: false });
+         setInvoices(data || []);
+      };
+      loadInvoices();
+   }, [user?.id]);
 
    const handleUpgrade = async (tier: SubscriptionTier) => {
       setLoading(true);
       await new Promise(r => setTimeout(r, 1200));
 
-      // Simuler la mise à jour des limites dans la DB
+      // Mettre à jour les limites dans Supabase
       let limits = { maxSalons: 1, maxStaff: 2 };
       if (tier === 'PRO') limits = { maxSalons: 5, maxStaff: 50 };
       if (tier === 'ELITE') limits = { maxSalons: 99, maxStaff: 999 };
 
-      await db.updateSubscription(user!.id, limits);
+      await supabase.from('subscriptions').upsert({
+         user_id: user!.id,
+         tier,
+         max_salons: limits.maxSalons,
+         max_staff: limits.maxStaff,
+         updated_at: new Date().toISOString(),
+      }, { onConflict: 'user_id' });
 
       alert(`Bravo ! Votre empire s'agrandit. Plan ${tier} activé.`);
       setLoading(false);
@@ -215,7 +235,9 @@ const BillingScreen = () => {
                         </tr>
                      </thead>
                      <tbody className="divide-y divide-slate-50">
-                        {db.getInvoices(user!.id).map((inv) => (
+                        {invoices.length === 0 ? (
+                           <tr><td colSpan={5} className="px-10 py-16 text-center text-slate-300 font-black uppercase italic text-xs">Aucune facture pour l'instant</td></tr>
+                        ) : invoices.map((inv) => (
                            <tr key={inv.id} className="hover:bg-slate-50/50 transition-colors">
                               <td className="px-10 py-6 font-black text-xs text-slate-900 uppercase">#{inv.id}</td>
                               <td className="px-10 py-6 font-bold text-xs text-slate-500">{new Date(inv.date).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })}</td>
