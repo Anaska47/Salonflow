@@ -8,7 +8,7 @@
 import { supabase } from './supabaseClient';
 import {
     User, Salon, Service, Product, Sale, Appointment,
-    UserRole, StaffSchedule, CartItem
+    UserRole, StaffSchedule, SaleItem
 } from '../types';
 
 // ============================================================
@@ -63,6 +63,7 @@ const mapAppointment = (row: any): Appointment => ({
     salonId: row.salon_id,
     staffId: row.staff_id,
     staffName: row.staff_name,
+    serviceId: row.service_id,
     serviceName: row.service_name,
     clientName: row.client_name,
     clientPhone: row.client_phone || '',
@@ -152,7 +153,12 @@ export const sbGetServices = async (salonId: string): Promise<Service[]> => {
         .select('*')
         .eq('salon_id', salonId)
         .order('created_at', { ascending: true });
-    if (error) { console.error('sbGetServices:', error); return []; }
+    if (error) {
+        const msg = `sbGetServices Error: ${error.message}`;
+        console.error(msg, error);
+        alert(msg);
+        return [];
+    }
     return (data || []).map(mapService);
 };
 
@@ -311,7 +317,7 @@ export const sbCreateSale = async (
         salonId: string;
         staffId: string;
         staffName: string;
-        items: CartItem[];
+        items: SaleItem[];
         totalCA: number;
         totalProducts: number;
         tipAmount: number;
@@ -335,7 +341,10 @@ export const sbCreateSale = async (
         }])
         .select()
         .single();
-    if (error) { console.error('sbCreateSale:', error); return null; }
+    if (error) {
+        console.error('sbCreateSale Error:', error);
+        throw new Error(error.message || 'Erreur DB lors de la vente');
+    }
     return mapSale(data);
 };
 
